@@ -84,6 +84,32 @@ export const LandingPage: React.FC = () => {
         </div>
       </section>
 
+      {/* Struggles Section */}
+      <section id="struggles" className="py-32 bg-[#f8fafc]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-20">
+            <h2 className="text-4xl font-extrabold text-[#0f2a43] mb-4">Healthcare shouldn't be a puzzle.</h2>
+            <p className="text-slate-500 max-w-2xl mx-auto">Patients face significant hurdles when trying to manage their own health data.</p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              { title: "Messy Handwriting", desc: "Deciphering a doctor's handwriting is often impossible for patients." },
+              { title: "Complex Jargon", desc: "Medical terms are designed for doctors, leaving patients in the dark." },
+              { title: "Hidden Costs", desc: "Hospital bills are often a black box of unexplained charges." }
+            ].map((item, i) => (
+              <div key={i} className="bg-white p-10 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center mb-6">
+                  <ShieldAlert className="w-6 h-6 text-red-400" />
+                </div>
+                <h4 className="text-xl font-bold text-[#0f2a43] mb-4">{item.title}</h4>
+                <p className="text-slate-500 text-sm leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Solution Section */}
       <section id="solution" className="py-32 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
