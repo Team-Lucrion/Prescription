@@ -1,12 +1,13 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
-import { MedicalAnalysis } from "../types.ts";
+import { MedicalAnalysis } from "../types";
 
 const ANALYSIS_SCHEMA = {
   type: Type.OBJECT,
   properties: {
     documentType: { type: Type.STRING },
+
     summary: { type: Type.STRING },
+
     simplifiedTerms: {
       type: Type.ARRAY,
       items: {
@@ -18,6 +19,21 @@ const ANALYSIS_SCHEMA = {
         }
       }
     },
+
+    medicines: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING },
+          strength: { type: Type.STRING },
+          frequency: { type: Type.STRING },
+          duration: { type: Type.STRING },
+          confidence: { type: Type.STRING }
+        }
+      }
+    },
+
     criticalFindings: {
       type: Type.ARRAY,
       items: {
@@ -29,6 +45,7 @@ const ANALYSIS_SCHEMA = {
         }
       }
     },
+
     genericAlternatives: {
       type: Type.ARRAY,
       items: {
@@ -42,6 +59,7 @@ const ANALYSIS_SCHEMA = {
         }
       }
     },
+
     costInsights: {
       type: Type.OBJECT,
       properties: {
@@ -57,27 +75,38 @@ const ANALYSIS_SCHEMA = {
         },
         isOvercharged: { type: Type.BOOLEAN },
         tierComparison: { type: Type.STRING }
-      },
-      required: ['procedureName', 'expectedRange', 'isOvercharged', 'tierComparison']
+      }
     },
-    nextSteps: { type: Type.ARRAY, items: { type: Type.STRING } }
+
+    nextSteps: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING }
+    }
   },
-  required: ['documentType', 'summary', 'simplifiedTerms', 'criticalFindings', 'nextSteps']
+
+  required: [
+    "documentType",
+    "summary",
+    "simplifiedTerms",
+    "criticalFindings",
+    "nextSteps"
+  ]
 };
 
 export const analyzeMedicalDocument = async (
   base64Data: string,
   mimeType: string,
-  cityTier: string = 'Tier-1'
+  cityTier: string = "Tier-1"
 ): Promise<MedicalAnalysis> => {
   try {
-    // CRITICAL: New instance before call ensures latest credentials
-   const ai = new GoogleGenAI({
-  apiKey: import.meta.env.VITE_GEMINI_API_KEY
-});
-    
+
+    const ai = new GoogleGenAI({
+      apiKey: import.meta.env.VITE_GEMINI_API_KEY
+    });
+
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: "gemini-2.0-flash",
+
       contents: {
         parts: [
           {
@@ -86,42 +115,101 @@ export const analyzeMedicalDocument = async (
               mimeType: mimeType
             }
           },
+
           {
-            text: `Analyze this medical document. 
-            Context: Patient is in a ${cityTier} city in India.
-            1. Determine Document Type (Prescription, Bill, Lab, Insurance Rejection).
-            2. Explain medical jargon in simple English.
-            3. If Prescription: Identify BRANDED medicines and suggest Jan Aushadhi (Generic) alternatives with estimated price difference in INR (₹).
-            4. If Bill: Benchmark costs against Indian averages for ${cityTier}. 
-               Standard surgery ranges for reference: Cataract ₹20k-40k, C-Section ₹60k-1L, Dialysis ₹2.5k-5k.
-            5. Flag any unusually high charges or unnecessary "miscellaneous" fees like excessive RMO charges or consumable overheads.
-            6. Recommend actionable next steps.
-            ALWAYS add a clear disclaimer: 'Consult your doctor before making changes to medication.'
-            Format output strictly as JSON.`
+            text: `
+You are an expert Indian medical document analyst specializing in handwritten doctor prescriptions, lab reports, and hospital bills.
+
+The document may contain messy handwriting, unclear abbreviations, or partial text.
+
+Follow this analysis process carefully.
+
+STEP 1 — Identify document type:
+Determine if the document is:
+- Prescription
+- Lab Report
+- Hospital Bill
+- Insurance Rejection
+- Other medical document
+
+STEP 2 — Carefully read the document:
+Mentally zoom into each section of the image and extract visible information.
+
+STEP 3 — Extract medicines if present:
+For each medicine identify:
+- Name
+- Strength (mg/ml if visible)
+- Frequency (once daily, twice daily, etc)
+- Duration if written
+
+If handwriting is unclear mark fields as "uncertain".
+
+STEP 4 — Normalize medicine names:
+Convert branded medicines into generic medicines if possible.
+Suggest Jan Aushadhi alternatives where applicable with estimated savings in INR.
+
+STEP 5 — Explain medical terms:
+Simplify complex medical terms into plain English understandable by patients.
+
+STEP 6 — Detect critical findings:
+Highlight any:
+- antibiotics
+- steroids
+- strong medications
+- abnormal lab values
+Explain why attention is needed.
+
+STEP 7 — Analyze costs if document is a bill:
+Compare costs with typical Indian hospital ranges for ${cityTier} cities.
+
+Example reference ranges:
+Cataract surgery ₹20k–40k
+C-Section ₹60k–1L
+Dialysis ₹2500–5000
+
+Flag possible overcharging or unnecessary fees.
+
+STEP 8 — Provide safe next steps for the patient.
+
+STEP 9 — Always include this safety disclaimer:
+"Consult your doctor before making any changes to medication."
+
+IMPORTANT RULES:
+- Never invent medicines that are not visible.
+- If information is unclear mark it as uncertain.
+- Return strictly valid JSON matching the schema.
+
+Context: Patient is located in a ${cityTier} city in India.
+`
           }
         ]
       },
+
       config: {
-        systemInstruction: "You are an expert Indian Medical Consultant specializing in simplifying complex medical documents for patients. You provide accurate, empathetic, and actionable insights while strictly adhering to the requested JSON format.",
-        responseMimeType: 'application/json',
-        responseSchema: ANALYSIS_SCHEMA,
+        systemInstruction:
+          "You are a careful, accurate medical AI assistant helping patients understand prescriptions and medical documents safely.",
+
+        responseMimeType: "application/json",
+
+        responseSchema: ANALYSIS_SCHEMA
       }
     });
 
     const text = response.text;
+
     if (!text) {
-      console.error('Gemini response text is empty');
-      throw new Error("No analysis generated from the document.");
+      throw new Error("No response from Gemini.");
     }
-    
+
     try {
       return JSON.parse(text) as MedicalAnalysis;
-    } catch {
-      console.error('Failed to parse Gemini JSON:', text);
-      throw new Error("The analysis result was invalid. Please try again.");
+    } catch (error) {
+      console.error("Gemini returned invalid JSON:", text);
+      throw new Error("AI response format invalid.");
     }
+
   } catch (err) {
-    console.error('Gemini Analysis Error:', err);
+    console.error("Gemini analysis failed:", err);
     throw err;
   }
 };
