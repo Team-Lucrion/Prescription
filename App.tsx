@@ -81,21 +81,30 @@ const App: React.FC = () => {
   }, [getToken]);
 
   const fetchHistory = useCallback(async (userId: string) => {
-    const token = await getSafeToken();
-    const supabase = createClerkSupabaseClient(token);
-    
-    const { data, error } = await supabase
-      .from('scans')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-    
-    if (data && !error) {
-      setHistory(data.map(item => ({
-        ...item.analysis_data,
-        id: item.id,
-        timestamp: new Date(item.created_at).getTime()
-      })));
+    try {
+      const token = await getSafeToken();
+      const supabase = createClerkSupabaseClient(token);
+      
+      const { data, error } = await supabase
+        .from('scans')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error('Supabase fetch error:', error);
+        return;
+      }
+
+      if (data) {
+        setHistory(data.map(item => ({
+          ...item.analysis_data,
+          id: item.id,
+          timestamp: new Date(item.created_at).getTime()
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to fetch history:', err);
     }
   }, [getSafeToken]);
 
@@ -144,25 +153,31 @@ const App: React.FC = () => {
       
       if (user) {
         // Save to Supabase
-        const token = await getSafeToken();
-        const supabase = createClerkSupabaseClient(token);
-        
-        const { error } = await supabase.from('scans').insert({
-          user_id: user.id,
-          analysis_data: enriched,
-          document_type: result.documentType
-        });
-        
-        if (!error) {
-          fetchHistory(user.id);
+        try {
+          const token = await getSafeToken();
+          const supabase = createClerkSupabaseClient(token);
+          
+          const { error } = await supabase.from('scans').insert({
+            user_id: user.id,
+            analysis_data: enriched,
+            document_type: result.documentType
+          });
+          
+          if (error) {
+            console.error('Supabase insert error:', error);
+          } else {
+            fetchHistory(user.id);
+          }
+        } catch (err) {
+          console.error('Failed to save to Supabase:', err);
         }
       }
     } catch (err) {
-      console.error(err);
+      console.error('Analysis Error:', err);
       setState(prev => ({ 
         ...prev, 
         isAnalyzing: false, 
-        error: "IQ Analysis failed. Please ensure the document is clearly visible and try again." 
+        error: err instanceof Error ? err.message : "IQ Analysis failed. Please ensure the document is clearly visible and try again." 
       }));
     }
   };
