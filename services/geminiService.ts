@@ -85,7 +85,7 @@ export const analyzeMedicalDocument = async (
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash", // best free-tier model
+      model: "gemini-2.0-flash", // best free-tier model
       contents: [
         {
           inlineData: {
