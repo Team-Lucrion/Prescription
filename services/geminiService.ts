@@ -1,66 +1,159 @@
-import { GoogleGenAI } from "@google/genai";
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const GEMINI_ENDPOINT =
+  "https://generativelanguage.googleapis.com/v1beta/models"
 
-const ai = new GoogleGenAI({
-  apiKey: API_KEY
-});
+const MODELS = [
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-pro"
+]
 
-async function callGemini(model: string, contents: any) {
-  return ai.models.generateContent({
-    model,
-    contents
-  });
+// Simple medicine dataset (can expand later or load from JSON)
+const MEDICINE_DB: Record<string, { use: string; dose: string }> = {
+  paracetamol: {
+    use: "Used to treat fever and mild pain",
+    dose: "Common dose: 500mg"
+  },
+  crocin: {
+    use: "Fever and pain relief (Paracetamol brand)",
+    dose: "Common dose: 500mg"
+  },
+  amoxicillin: {
+    use: "Antibiotic used for bacterial infections",
+    dose: "Typical adult dose: 250-500mg"
+  },
+  ibuprofen: {
+    use: "Pain relief and inflammation reduction",
+    dose: "Common dose: 200-400mg"
+  }
 }
 
-export const analyzeMedicalDocument = async (
-  base64Data: string,
-  mimeType: string
-) => {
+// Timeout protection
+function timeout(ms: number) {
+  return new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("AI timeout")), ms)
+  )
+}
 
-  const contents = [
+// Gemini API call
+async function callGemini(model: string, contents: any) {
+
+  const response = await fetch(
+    `${GEMINI_ENDPOINT}/${model}:generateContent?key=${API_KEY}`,
     {
-      inlineData: {
-        data: base64Data,
-        mimeType
-      }
-    },
-    {
-      text: "Extract medicines, dosage, frequency and explain simply. Return JSON."
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        contents
+      })
     }
-  ];
+  )
 
-  try {
+  if (!response.ok) {
+    throw new Error(`Gemini error ${response.status}`)
+  }
 
-    // Primary model
-    return await callGemini("gemini-2.0-flash", contents);
+  const data = await response.json()
 
-  } catch (err: any) {
+  const text =
+    data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
 
-    console.warn("Primary model failed. Trying fallback...");
+  return text
+}
+
+// Extract medicine names from text
+function detectMedicines(text: string) {
+
+  const found: any[] = []
+
+  const lower = text.toLowerCase()
+
+  for (const med in MEDICINE_DB) {
+    if (lower.includes(med)) {
+      found.push({
+        name: med,
+        ...MEDICINE_DB[med]
+      })
+    }
+  }
+
+  return found
+}
+
+// Local fallback analysis
+function localPrescriptionAnalysis(text: string) {
+
+  const medicines = detectMedicines(text)
+
+  return {
+    documentType: "Prescription",
+    summary:
+      medicines.length > 0
+        ? "Basic prescription analysis (AI unavailable)"
+        : "Prescription detected but medicines could not be confidently identified.",
+    simplifiedTerms: medicines.map(m => ({
+      term: m.name,
+      explanation: m.use
+    })),
+    criticalFindings: [],
+    nextSteps: [
+      "Consult your doctor before taking medicines",
+      "Verify dosage instructions",
+      "Retry AI analysis later"
+    ]
+  }
+}
+
+// Main function
+export async function runPrescriptionAI(contents: any) {
+
+  for (const model of MODELS) {
 
     try {
 
-      // Backup model
-      return await callGemini("gemini-1.5-pro", contents);
+      console.log(`Trying model: ${model}`)
 
-    } catch (err2) {
+      const result = await Promise.race([
+        callGemini(model, contents),
+        timeout(8000)
+      ])
 
-      console.error("Fallback model failed");
+      if (result) {
 
-      return {
-        text: JSON.stringify({
-          documentType: "Prescription",
-          summary: "AI temporarily unavailable. Please try again shortly.",
-          simplifiedTerms: [],
-          criticalFindings: [],
-          nextSteps: [
-            "Retry analysis",
-            "Ensure prescription image is clear"
-          ]
-        })
-      };
+        try {
+          return JSON.parse(result)
+        } catch {
+
+          // If AI returned plain text
+          return {
+            documentType: "Prescription",
+            summary: result,
+            simplifiedTerms: [],
+            criticalFindings: [],
+            nextSteps: []
+          }
+        }
+
+      }
+
+    } catch (error) {
+
+      console.warn(`Model ${model} failed`, error)
 
     }
+
   }
-};
+
+  // AI failed → use local dataset fallback
+  console.warn("All AI models failed. Using local medicine dataset.")
+
+  const textInput =
+    contents?.[0]?.parts?.[0]?.text ||
+    JSON.stringify(contents)
+
+  return localPrescriptionAnalysis(textInput)
+
+}
