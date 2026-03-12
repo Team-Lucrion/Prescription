@@ -2,6 +2,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { MedicalAnalysis } from "../types.ts";
 
+// Get API key correctly from Vite env
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+
 // JSON schema for AI output
 const ANALYSIS_SCHEMA = {
   type: Type.OBJECT,
@@ -71,14 +74,18 @@ export const analyzeMedicalDocument = async (
   mimeType: string,
   cityTier: string = 'Tier-1'
 ): Promise<MedicalAnalysis> => {
+
+  if (!API_KEY) {
+    throw new Error("Gemini API key missing. Check Netlify env variables.");
+  }
+
   try {
-    // Use free-tier model
     const ai = new GoogleGenAI({
-      apiKey: process.env.VITE_GEMINI_API_KEY
+      apiKey: API_KEY
     });
 
     const response = await ai.models.generateContent({
-      model: 'gemini-1.5', // free-tier model
+      model: "gemini-1.5-flash", // best free-tier model
       contents: [
         {
           inlineData: {
@@ -88,42 +95,39 @@ export const analyzeMedicalDocument = async (
         },
         {
           text: `Analyze this medical document (prescription, bill, or lab report).
-- Context: Patient in a ${cityTier} city in India.
-- Identify document type.
-- Extract all medicines, strengths, frequencies, durations.
-- Explain medical jargon in plain English.
-- Suggest generic alternatives if branded medicines are present.
-- Flag unusually high charges or unnecessary fees.
-- Provide actionable next steps.
-- ALWAYS output valid JSON matching the schema strictly.
-- Include a confidence score for each medicine.
-- Add clear disclaimer: "Consult your doctor before making changes to medication."`
+
+Context: Patient in a ${cityTier} city in India.
+
+Tasks:
+- Identify document type
+- Extract medicines, dosage, frequency, duration
+- Explain medical jargon simply
+- Suggest generic alternatives if branded medicines exist
+- Detect unusual charges
+- Provide clear next steps
+
+Rules:
+- ALWAYS return valid JSON matching schema
+- Be medically cautious
+- Add disclaimer: "Consult your doctor before changing medication."`
         }
       ],
       config: {
-        systemInstruction: "You are an expert Indian Medical Consultant. Provide accurate, empathetic, structured insights in JSON format.",
-        responseMimeType: 'application/json',
+        systemInstruction:
+          "You are an expert Indian medical analyst. Provide safe, structured explanations.",
+        responseMimeType: "application/json",
         responseSchema: ANALYSIS_SCHEMA
       }
     });
 
     if (!response.text) {
-      console.error('Gemini response empty');
       throw new Error("No analysis generated.");
     }
 
-    try {
-      return JSON.parse(response.text) as MedicalAnalysis;
-    } catch {
-      console.error('Failed to parse Gemini JSON:', response.text);
-      throw new Error("Invalid analysis result. Try again.");
-    }
+    return JSON.parse(response.text) as MedicalAnalysis;
+
   } catch (err: any) {
-    if (err.code === 429) {
-      console.warn('Rate limit hit for free-tier model, retry after a short delay.');
-    } else {
-      console.error('Gemini Analysis Error:', err);
-    }
+    console.error("Gemini error:", err);
     throw err;
   }
 };
