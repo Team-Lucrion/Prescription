@@ -108,7 +108,7 @@ function localPrescriptionAnalysis(text: string) {
 }
 
 // Main function
-export async function runPrescriptionAI(contents: any) {
+export async function analyzeMedicalDocument(contents: any){
 
   for (const model of MODELS) {
 
