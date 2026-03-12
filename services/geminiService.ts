@@ -9,35 +9,40 @@ const MODELS = [
   "gemini-1.5-pro"
 ]
 
-// Simple medicine dataset (can expand later or load from JSON)
-const MEDICINE_DB: Record<string, { use: string; dose: string }> = {
-  paracetamol: {
-    use: "Used to treat fever and mild pain",
-    dose: "Common dose: 500mg"
-  },
-  crocin: {
-    use: "Fever and pain relief (Paracetamol brand)",
-    dose: "Common dose: 500mg"
-  },
-  amoxicillin: {
-    use: "Antibiotic used for bacterial infections",
-    dose: "Typical adult dose: 250-500mg"
-  },
-  ibuprofen: {
-    use: "Pain relief and inflammation reduction",
-    dose: "Common dose: 200-400mg"
-  }
+/* ----------------------------- */
+/* Convert image file to base64 */
+/* ----------------------------- */
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = () => {
+      const result = reader.result as string
+      const base64 = result.split(",")[1]
+      resolve(base64)
+    }
+
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
 }
 
-// Timeout protection
+/* ----------------------------- */
+/* Timeout helper */
+/* ----------------------------- */
+
 function timeout(ms: number) {
   return new Promise((_, reject) =>
     setTimeout(() => reject(new Error("AI timeout")), ms)
   )
 }
 
-// Gemini API call
-async function callGemini(model: string, contents: any) {
+/* ----------------------------- */
+/* Call Gemini */
+/* ----------------------------- */
+
+async function callGemini(model: string, body: any) {
 
   const response = await fetch(
     `${GEMINI_ENDPOINT}/${model}:generateContent?key=${API_KEY}`,
@@ -46,9 +51,7 @@ async function callGemini(model: string, contents: any) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        contents
-      })
+      body: JSON.stringify(body)
     }
   )
 
@@ -58,102 +61,130 @@ async function callGemini(model: string, contents: any) {
 
   const data = await response.json()
 
-  const text =
+  return (
     data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
-
-  return text
+  )
 }
 
-// Extract medicine names from text
-function detectMedicines(text: string) {
+/* ----------------------------- */
+/* Main AI Function */
+/* ----------------------------- */
 
-  const found: any[] = []
+export async function analyzeMedicalDocument(file: File) {
 
-  const lower = text.toLowerCase()
+  try {
 
-  for (const med in MEDICINE_DB) {
-    if (lower.includes(med)) {
-      found.push({
-        name: med,
-        ...MEDICINE_DB[med]
-      })
+    const base64Image = await fileToBase64(file)
+
+    const prompt = `
+You are a medical prescription analyzer.
+
+Analyze this prescription image.
+
+Return ONLY JSON in this format:
+
+{
+  "documentType": "",
+  "summary": "",
+  "simplifiedTerms": [],
+  "criticalFindings": [],
+  "medicines": [
+    {
+      "name": "",
+      "dose": "",
+      "purpose": ""
     }
-  }
-
-  return found
+  ]
 }
+`
 
-// Local fallback analysis
-function localPrescriptionAnalysis(text: string) {
-
-  const medicines = detectMedicines(text)
-
-  return {
-    documentType: "Prescription",
-    summary:
-      medicines.length > 0
-        ? "Basic prescription analysis (AI unavailable)"
-        : "Prescription detected but medicines could not be confidently identified.",
-    simplifiedTerms: medicines.map(m => ({
-      term: m.name,
-      explanation: m.use
-    })),
-    criticalFindings: [],
-    nextSteps: [
-      "Consult your doctor before taking medicines",
-      "Verify dosage instructions",
-      "Retry AI analysis later"
-    ]
-  }
-}
-
-// Main function
-export async function analyzeMedicalDocument(contents: any){
-
-  for (const model of MODELS) {
-
-    try {
-
-      console.log(`Trying model: ${model}`)
-
-      const result = await Promise.race([
-        callGemini(model, contents),
-        timeout(8000)
-      ])
-
-      if (result) {
-
-        try {
-          return JSON.parse(result)
-        } catch {
-
-          // If AI returned plain text
-          return {
-            documentType: "Prescription",
-            summary: result,
-            simplifiedTerms: [],
-            criticalFindings: [],
-            nextSteps: []
-          }
+    const body = {
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            {
+              inline_data: {
+                mime_type: file.type,
+                data: base64Image
+              }
+            }
+          ]
         }
+      ]
+    }
+
+    /* Try multiple models */
+
+    for (const model of MODELS) {
+
+      try {
+
+        console.log(`Trying Gemini model: ${model}`)
+
+        const result = await Promise.race([
+          callGemini(model, body),
+          timeout(10000)
+        ])
+
+        if (result) {
+
+          try {
+            return JSON.parse(result)
+          } catch {
+
+            return {
+              documentType: "Prescription",
+              summary: result,
+              simplifiedTerms: [],
+              criticalFindings: [],
+              medicines: [],
+              nextSteps: []
+            }
+
+          }
+
+        }
+
+      } catch (err) {
+
+        console.warn(`Model ${model} failed`, err)
 
       }
 
-    } catch (error) {
+    }
 
-      console.warn(`Model ${model} failed`, error)
+    /* If all models fail */
 
+    return {
+      documentType: "Prescription",
+      summary:
+        "AI temporarily unavailable. Please try again.",
+      simplifiedTerms: [],
+      criticalFindings: [],
+      medicines: [],
+      nextSteps: [
+        "Retry analysis",
+        "Ensure prescription image is clear"
+      ]
+    }
+
+  } catch (error) {
+
+    console.error("Analysis failed:", error)
+
+    return {
+      documentType: "Unknown",
+      summary: "Unable to process image.",
+      simplifiedTerms: [],
+      criticalFindings: [],
+      medicines: [],
+      nextSteps: [
+        "Upload a clearer image",
+        "Retry analysis"
+      ]
     }
 
   }
-
-  // AI failed → use local dataset fallback
-  console.warn("All AI models failed. Using local medicine dataset.")
-
-  const textInput =
-    contents?.[0]?.parts?.[0]?.text ||
-    JSON.stringify(contents)
-
-  return localPrescriptionAnalysis(textInput)
 
 }
