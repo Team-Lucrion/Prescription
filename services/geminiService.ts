@@ -20,6 +20,9 @@ function fileToBase64(file: File): Promise<string> {
     reader.onload = () => {
       const result = reader.result as string
       const base64 = result.split(",")[1]
+
+      console.log("Image base64 length:", base64.length)
+
       resolve(base64)
     }
 
@@ -36,6 +39,17 @@ function timeout(ms: number) {
   return new Promise((_, reject) =>
     setTimeout(() => reject(new Error("AI timeout")), ms)
   )
+}
+
+/* ----------------------------- */
+/* Clean Gemini JSON response */
+/* ----------------------------- */
+
+function cleanJSON(text: string) {
+  return text
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim()
 }
 
 /* ----------------------------- */
@@ -56,10 +70,14 @@ async function callGemini(model: string, body: any) {
   )
 
   if (!response.ok) {
+    const errorText = await response.text()
+    console.error("Gemini API error:", errorText)
     throw new Error(`Gemini error ${response.status}`)
   }
 
   const data = await response.json()
+
+  console.log("Gemini raw response:", data)
 
   return (
     data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
@@ -105,16 +123,20 @@ Return ONLY JSON in this format:
             { text: prompt },
             {
               inline_data: {
-                mime_type: file.type,
+                mime_type: file.type || "image/jpeg",
                 data: base64Image
               }
             }
           ]
         }
-      ]
+      ],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: "application/json"
+      }
     }
 
-    /* Try multiple models */
+    /* Try multiple Gemini models */
 
     for (const model of MODELS) {
 
@@ -130,8 +152,13 @@ Return ONLY JSON in this format:
         if (result) {
 
           try {
-            return JSON.parse(result)
+
+            const cleaned = cleanJSON(result)
+            return JSON.parse(cleaned)
+
           } catch {
+
+            console.warn("JSON parse failed, returning raw text")
 
             return {
               documentType: "Prescription",
@@ -158,8 +185,7 @@ Return ONLY JSON in this format:
 
     return {
       documentType: "Prescription",
-      summary:
-        "AI temporarily unavailable. Please try again.",
+      summary: "AI temporarily unavailable. Please try again.",
       simplifiedTerms: [],
       criticalFindings: [],
       medicines: [],
