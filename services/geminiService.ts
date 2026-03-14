@@ -1,216 +1,71 @@
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { MedicalAnalysis } from "../types";
 
-const GEMINI_ENDPOINT =
-  "https://generativelanguage.googleapis.com/v1beta/models"
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
-const MODELS = [
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro"
-]
-
-/* ----------------------------- */
-/* Convert image file to base64 */
-/* ----------------------------- */
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-
-    reader.onload = () => {
-      const result = reader.result as string
-      const base64 = result.split(",")[1]
-
-      console.log("Image base64 length:", base64.length)
-
-      resolve(base64)
-    }
-
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
+if (!apiKey) {
+  throw new Error("Missing Gemini API key. Set VITE_GEMINI_API_KEY in .env");
 }
 
-/* ----------------------------- */
-/* Timeout helper */
-/* ----------------------------- */
+const genAI = new GoogleGenerativeAI(apiKey);
 
-function timeout(ms: number) {
-  return new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("AI timeout")), ms)
-  )
+export const analyzeMedicalDocument = async (
+  base64Image: string,
+  mimeType: string,
+  cityTier: string
+): Promise<MedicalAnalysis> => {
+
+  const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash"
+  });
+
+  const prompt = `
+You are a medical document analysis assistant.
+
+Analyze the uploaded medical document (prescription, bill, or lab report).
+
+Return the result ONLY in JSON format with this structure:
+
+{
+  "documentType": "PRESCRIPTION | BILL | LAB_REPORT | OTHER",
+  "summary": "Short summary of the document",
+  "keyFindings": ["important point 1","important point 2"],
+  "costInsights": "Explain cost relevance for ${cityTier} cities in India",
+  "recommendations": ["recommendation 1","recommendation 2"]
 }
 
-/* ----------------------------- */
-/* Clean Gemini JSON response */
-/* ----------------------------- */
-
-function cleanJSON(text: string) {
-  return text
-    .replace(/```json/g, "")
-    .replace(/```/g, "")
-    .trim()
-}
-
-/* ----------------------------- */
-/* Call Gemini */
-/* ----------------------------- */
-
-async function callGemini(model: string, body: any) {
-
-  const response = await fetch(
-    `${GEMINI_ENDPOINT}/${model}:generateContent?key=${API_KEY}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    }
-  )
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error("Gemini API error:", errorText)
-    throw new Error(`Gemini error ${response.status}`)
-  }
-
-  const data = await response.json()
-
-  console.log("Gemini raw response:", data)
-
-  return (
-    data?.candidates?.[0]?.content?.parts?.[0]?.text || ""
-  )
-}
-
-/* ----------------------------- */
-/* Main AI Function */
-/* ----------------------------- */
-
-export async function analyzeMedicalDocument(file: File) {
+Important rules:
+- Use simple English
+- Be accurate
+- If handwriting is unclear, mention it
+- Only return JSON
+`;
 
   try {
 
-    const base64Image = await fileToBase64(file)
-
-    const prompt = `
-You are a medical prescription analyzer.
-
-Analyze this prescription image.
-
-Return ONLY JSON in this format:
-
-{
-  "documentType": "",
-  "summary": "",
-  "simplifiedTerms": [],
-  "criticalFindings": [],
-  "medicines": [
-    {
-      "name": "",
-      "dose": "",
-      "purpose": ""
-    }
-  ]
-}
-`
-
-    const body = {
-      contents: [
-        {
-          parts: [
-            { text: prompt },
-            {
-              inline_data: {
-                mime_type: file.type || "image/jpeg",
-                data: base64Image
-              }
-            }
-          ]
+    const result = await model.generateContent([
+      prompt,
+      {
+        inlineData: {
+          data: base64Image,
+          mimeType: mimeType
         }
-      ],
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: "application/json"
       }
-    }
+    ]);
 
-    /* Try multiple Gemini models */
+    const response = await result.response;
+    const text = response.text();
 
-    for (const model of MODELS) {
+    // remove markdown if Gemini adds it
+    const clean = text
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
 
-      try {
-
-        console.log(`Trying Gemini model: ${model}`)
-
-        const result = await Promise.race([
-          callGemini(model, body),
-          timeout(10000)
-        ])
-
-        if (result) {
-
-          try {
-
-            const cleaned = cleanJSON(result)
-            return JSON.parse(cleaned)
-
-          } catch {
-
-            console.warn("JSON parse failed, returning raw text")
-
-            return {
-              documentType: "Prescription",
-              summary: result,
-              simplifiedTerms: [],
-              criticalFindings: [],
-              medicines: [],
-              nextSteps: []
-            }
-
-          }
-
-        }
-
-      } catch (err) {
-
-        console.warn(`Model ${model} failed`, err)
-
-      }
-
-    }
-
-    /* If all models fail */
-
-    return {
-      documentType: "Prescription",
-      summary: "AI temporarily unavailable. Please try again.",
-      simplifiedTerms: [],
-      criticalFindings: [],
-      medicines: [],
-      nextSteps: [
-        "Retry analysis",
-        "Ensure prescription image is clear"
-      ]
-    }
+    return JSON.parse(clean);
 
   } catch (error) {
-
-    console.error("Analysis failed:", error)
-
-    return {
-      documentType: "Unknown",
-      summary: "Unable to process image.",
-      simplifiedTerms: [],
-      criticalFindings: [],
-      medicines: [],
-      nextSteps: [
-        "Upload a clearer image",
-        "Retry analysis"
-      ]
-    }
-
+    console.error("Gemini API Error:", error);
+    throw new Error("Medical document analysis failed.");
   }
-
-}
+};
